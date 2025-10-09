@@ -12,6 +12,7 @@ import concurrent.futures
 import json
 import logging
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin
@@ -80,7 +81,12 @@ class ShardLike:
     Present a "classic" repodata.json as per-package shards.
     """
 
-    def __init__(self, repodata: RepodataDict, url: str = ""):
+    def __init__(
+        self,
+        repodata: RepodataDict,
+        url: str = "",
+        executor: concurrent.futures.Executor | None = None,
+    ):
         """
         url: affects the repr but not the functionality of this class.
         """
@@ -179,16 +185,24 @@ class Shards(ShardLike):
     """
 
     def __init__(
-        self, shards_index: ShardsIndexDict, url: str, shards_cache: shards_cache.ShardCache
+        self,
+        shards_index: ShardsIndexDict,
+        url: str,
+        shards_cache: shards_cache.ShardCache,
+        executor: concurrent.futures.Executor | None = None,
     ):
         """
         Args:
             shards_index: raw parsed msgpack dict
             url: URL of repodata_shards.msgpack.zst
+            shards_cache: shared between multiple Shards() instances
+            executor: optional shared threadpool
         """
         self.shards_index = shards_index
         self.url = url
         self.shards_cache = shards_cache
+
+        self._executor = executor
 
         # can we share a session for multiple subdir's of the same channel, or
         # any time self.shards_base_url is similar to another Shards() instance?
@@ -206,6 +220,22 @@ class Shards(ShardLike):
         # repodata will always include base_url, even if it an empty string;
         # this is also necessary for compatibility.
         self._base_url = shards_index["info"]["base_url"]
+
+    @contextmanager
+    def executor(self):
+        if self._executor is not None:
+            yield self._executor
+            return
+
+        # beneficial to have thread pool larger than requests' default 10 max
+        # connections per session. There is "context.repodata_threads" but it's
+        # None in the REPL.
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=context.repodata_threads
+            if context.repodata_threads is not None
+            else REPODATA_THREADS_DEFAULT
+        ) as executor:
+            yield executor
 
     @property
     def package_names(self):
@@ -272,15 +302,7 @@ class Shards(ShardLike):
             assert not package.startswith(("https://", "http://"))
             result[package] = shard
 
-        # beneficial to have thread pool larger than requests' default 10 max
-        # connections per session. There is "context.repodata_threads" but it's
-        # None in the REPL.
-        max_workers = (
-            context.repodata_threads
-            if context.repodata_threads is not None
-            else REPODATA_THREADS_DEFAULT
-        )
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with self.executor() as executor:
             futures = {
                 executor.submit(fetch, self.session, url, package): (url, package)
                 for url, package in urls_packages.items()
@@ -481,7 +503,7 @@ def batch_retrieve_from_network(wanted: list[tuple[Shards, str, str]]):
         shard.fetch_shards(packages)
 
 
-def fetch_channels(channels):
+def fetch_channels(channels, executor: concurrent.futures.Executor) -> dict[str, ShardLike]:
     channel_data: dict[str, ShardLike] = {}
 
     # share single disk cache for all Shards() instances
@@ -507,16 +529,7 @@ def fetch_channels(channels):
     else:
         # The parallel version may reorder channels, does this matter?
 
-        # beneficial to have thread pool larger than requests' default 10 max
-        # connections per session. There is "context.repodata_threads" but it's
-        # None in the REPL. For channels, we would usually be limited by the
-        # number of channels but not for individual shards elsewhere in this code.
-        max_workers = (
-            context.repodata_threads
-            if context.repodata_threads is not None
-            else REPODATA_THREADS_DEFAULT
-        )
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with executor as executor:
             futures = {
                 executor.submit(
                     fetch_shards_index, SubdirData(Channel(channel_url)), cache
@@ -545,7 +558,7 @@ def fetch_channels(channels):
                 # urljoin consistent with shards which end with
                 # /repodata_shards.msgpack.zst
                 url = f"{channel_url}/repodata.json"
-                found = ShardLike(repodata_json, url)
+                found = ShardLike(repodata_json, url, executor)
                 channel_data[channel_url] = found
 
     return channel_data

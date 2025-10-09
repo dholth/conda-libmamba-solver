@@ -32,6 +32,7 @@ can be used by a shards-unaware solver.
 
 from __future__ import annotations
 
+import concurrent.futures
 import heapq
 import json
 import logging
@@ -40,6 +41,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .shards import (
+    REPODATA_THREADS_DEFAULT,
     Shards,
     batch_retrieve_from_cache,
     batch_retrieve_from_network,
@@ -67,9 +69,10 @@ class RepodataSubset:
     nodes: dict[str, Node]
     shardlikes: list[ShardLike]
 
-    def __init__(self, shardlikes):
+    def __init__(self, shardlikes, executor: concurrent.futures.Executor | None = None):
         self.nodes = {}
         self.shardlikes = shardlikes
+        self.executor = executor
 
     def neighbors(self, node: Node):
         """
@@ -148,10 +151,11 @@ class RepodataSubset:
 
 
 def build_repodata_subset(root_packages, channels):
-    channel_data = fetch_channels(channels)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=REPODATA_THREADS_DEFAULT) as executor:
+        channel_data = fetch_channels(channels, executor)
 
-    subset = RepodataSubset((*channel_data.values(),))
-    subset.shortest(root_packages)
-    log.debug("%d package names discovered", len(subset.nodes))
+        subset = RepodataSubset((*channel_data.values(),))
+        subset.shortest(root_packages)
+        log.debug("%d package names discovered", len(subset.nodes))
 
     return channel_data
