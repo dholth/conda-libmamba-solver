@@ -1,0 +1,16 @@
+Without bulk from cache, "Build repodata subset took 11.2s"
+With bulk fetch, 10.9s
+
+Tries to fetch doubled-up repodata_shards.msgpack.zst:
+
+INFO:conda.gateways.repodata:Unable to retrieve repodata (response: 404) for https://repo.anaconda.com/pkgs/r/noarch/repodata_shards.msgpack.zst/repodata_shards.msgpack.zst
+INFO:conda.gateways.repodata.jlap.fetch:Download 2049786 bytes {'User-Agent': 'conda/25.7.1.dev79 requests/2.32.5 CPython/3.12.3 Darwin/24.6.0 OSX/15.6.1 solver/libmamba conda-libmamba-solver/25.4.1.dev10+g3052b17 libmambapy/2.1.0', 'Accept-Encoding': 'gzip, deflate, br, zstd', 'Accept': '*/*', 'Connection': 'keep-alive', 'Cookie': '__cf_bm=zJzW0.La5M.vsM1PMmOgFLLxbbrl9s3mdnQV8bKfNN0-1759197251-1.0.1.1-2ra_ClgJRZ9yjF3Kv6.FgDPET5Ov2xxUpOPBE0.rspcBU3h5xbYUzhmVxIy.bAqrapMuL27l7KKYHegM18kzCo7qfs_BPy.AqxP6rBYqq9Y'}
+INFO:conda.gateways.repodata.jlap.fetch:Apply 0 patches c25462d7872987b0… → c25462d7872987b0…
+"ca-certificates" -> "__win";
+
+3.8s with libmamba parse
+11.3s with PackageRecord
+
+
+Consider separating the "load, check timestamp" functions out of conda's
+repodata cache?
